@@ -1,50 +1,31 @@
 import os
-import logging
-from datetime import datetime
 import sounddevice as sd
-import numpy as np
 from scipy.io.wavfile import write
-import noisereduce as nr
-import matplotlib.pyplot as plt
-from scipy.signal import spectrogram
+import numpy as np
+from datetime import datetime
+# import simpleaudio as sa
 
 # ---------------------------
 # Configuration
 # ---------------------------
-SAMPLE_RATE = 16000  # 16kHz sampling
+SAMPLE_RATE = 16000  # 16kHz sampling rate
 CHANNELS = 1         # Mono recording
-NOISE_DURATION = 1   # Seconds for noise profiling
-
-# Directories
-RAW_DIR = "data/raw"
-CLEAN_DIR = "data/clean"
-LOG_DIR = "logs"
-SPEC_DIR = "data/spectrograms"
-
-# Create necessary directories
-os.makedirs(RAW_DIR, exist_ok=True)
-os.makedirs(CLEAN_DIR, exist_ok=True)
-os.makedirs(LOG_DIR, exist_ok=True)
-os.makedirs(SPEC_DIR, exist_ok=True)
+os.makedirs("data", exist_ok=True)  # Ensure data folder exists
 
 # ---------------------------
-# Logging Setup
+# Global Variables
 # ---------------------------
-logging.basicConfig(
-    filename=os.path.join(LOG_DIR, f"recorder_{datetime.now().strftime('%Y%m%d')}.log"),
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s"
-)
+audio_segments = []   # Stores recorded audio segments
 
 # ---------------------------
-# Core Functions
+# Recording Function
 # ---------------------------
 def record_audio(duration):
-    """Record audio with real-time monitoring"""
+    """Records audio and stores it in audio_segments."""
+    global audio_segments
+
+    print("\n🔴 Recording... (Ctrl+C to stop early)")
     try:
-        logging.info(f"Starting {duration}s recording")
-        print("\n🔴 Recording... (Ctrl+C to stop early)")
-        
         audio = []
         with sd.InputStream(samplerate=SAMPLE_RATE, channels=CHANNELS) as stream:
             for _ in range(int(duration * SAMPLE_RATE / 512)):
@@ -53,117 +34,69 @@ def record_audio(duration):
                 # Real-time waveform display
                 print("▌" * int(np.mean(np.abs(data)) * 50), end="\r")
         
-        return np.concatenate(audio)
+        audio_segments = np.concatenate(audio)
+        print("\n⏹️ Recording completed!")
     except KeyboardInterrupt:
-        print("\n⏹️ Recording stopped by user")
-        return np.concatenate(audio)
-    except Exception as e:
-        logging.error(f"Recording failed: {str(e)}")
-        raise
+        print("\n⏹️ Recording stopped by user.")
+        audio_segments = np.concatenate(audio)
 
-def normalize_audio(audio):
-    max_val = np.max(np.abs(audio))
-    return audio / max_val if max_val > 0 else audio
+def save_recording():
+    """Save the recorded audio to a file."""
+    global audio_segments
 
-def reduce_noise(audio):
-    """Apply noise reduction to recorded audio"""
-    try:
-        noise_sample = audio[:int(NOISE_DURATION * SAMPLE_RATE)]
-        return nr.reduce_noise(
-            y=audio,
-            y_noise=noise_sample,
-            sr=SAMPLE_RATE,
-            prop_decrease=0.9
-        )
-    except Exception as e:
-        logging.error(f"Noise reduction failed: {str(e)}")
-        raise
+    if len(audio_segments) == 0:
+        print("⚠️ No recording available to save.")
+        return None
 
-def plot_spectrogram(audio, sample_rate, title="Spectrogram", save_path=None):
-    """Plot and optionally save the spectrogram"""
-    try:
-        # Flatten audio if needed (handles shape like (N, 1, 1), (N, 1), etc.)
-        audio = np.squeeze(audio)
-
-        f, t, Sxx = spectrogram(audio, fs=sample_rate)
-        plt.figure(figsize=(10, 4))
-        plt.pcolormesh(t, f, 10 * np.log10(Sxx + 1e-10), shading='gouraud', cmap='inferno')
-        plt.ylabel('Frequency [Hz]')
-        plt.xlabel('Time [sec]')
-        plt.title(title)
-        plt.colorbar(label='Power [dB]')
-        plt.tight_layout()
-
-        if save_path:
-            plt.savefig(save_path)
-            logging.info(f"Saved spectrogram: {save_path}")
-        else:
-            plt.show()
-
-        plt.close()
-    except Exception as e:
-        logging.error(f"Spectrogram plotting failed: {str(e)}")
-        raise
-
-
-def save_recording(audio, clean_audio):
-    """Save both raw and cleaned audio"""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    file_path = f"data/recording_{timestamp}.wav"
+    write(file_path, SAMPLE_RATE, audio_segments)
     
-    raw_path = os.path.join(RAW_DIR, f"raw_{timestamp}.wav")
-    clean_path = os.path.join(CLEAN_DIR, f"clean_{timestamp}.wav")
-    
-    write(raw_path, SAMPLE_RATE, audio.astype(np.float32))
-    write(clean_path, SAMPLE_RATE, clean_audio.astype(np.float32))
+    print(f"\n✅ Recording saved as {file_path}")
+    return file_path
 
-    # Save spectrograms
-    plot_spectrogram(audio, SAMPLE_RATE, title="Raw Audio Spectrogram",
-                     save_path=os.path.join(SPEC_DIR, f"spectrogram_raw_{timestamp}.png"))
-    plot_spectrogram(clean_audio, SAMPLE_RATE, title="Cleaned Audio Spectrogram",
-                     save_path=os.path.join(SPEC_DIR, f"spectrogram_clean_{timestamp}.png"))
-    
-    return raw_path, clean_path
-
-def play_audio(audio):
-    """Play processed audio"""
-    try:
-        print("\n🔊 Playing cleaned audio...")
-        sd.play(audio, SAMPLE_RATE)
-        sd.wait()
-    except Exception as e:
-        logging.error(f"Playback failed: {str(e)}")
-        raise
+# def play_audio(file_path):
+#     """Play the saved audio file using simpleaudio."""
+#     try:
+#         if not os.path.exists(file_path):
+#             print(f"⚠️ File not found: {file_path}")
+#             return
+        
+#         print("\n🔊 Playing recorded audio...")
+#         wave_obj = sa.WaveObject.from_wave_file(file_path)
+#         play_obj = wave_obj.play()
+#         play_obj.wait_done()  # Wait until playback finishes
+#         print("🎵 Playback finished.")
+#     except Exception as e:
+#         print(f"⚠️ Error playing audio: {e}")
 
 # ---------------------------
-# Main Program
+# Main Program Interface
 # ---------------------------
 def main():
-    print("🎙️ Python Sleep Recorder")
-    print("-----------------------")
+    print("\n🎙️ Python Voice Recorder with Playback")
+    print("-------------------------------------")
     
-    try:
-        # Get recording duration
-        duration = int(input("Enter recording time in minutes: ")) * 60
-        if duration < 60:
-            print("⚠️ Minimum 1 minute required for sleep analysis")
-            duration = 60
-        
-        # Record audio
-        raw_audio = record_audio(duration)
-        raw_audio = normalize_audio(raw_audio)
-        
-        # Noise reduction
-        clean_audio = (raw_audio)
-        
-        # Save files and spectrograms
-        raw_path, clean_path = save_recording(raw_audio, clean_audio)
-        print(f"\n✅ Saved recordings:\n- Raw: {raw_path}\n- Clean: {clean_path}")
-        
-        # Playback
-        play_audio(clean_audio)
-        
-    except Exception as e:
-        print(f"\n❌ Error occurred: {str(e)}\nCheck logs for details")
+    while True:
+        command = input("\nEnter command: [record/save/play/exit]: ").lower()
+
+        if command == "record":
+            duration = int(input("Enter recording time in seconds: "))
+            record_audio(duration)
+        elif command == "save":
+            file_path = save_recording()
+            if file_path:
+                print(f"Saved recording at {file_path}")
+        elif command == "play":
+            file_path = input("Enter the path of the saved recording (or press Enter to use the latest): ")
+            if not file_path.strip():
+                file_path = f"data/recording_{datetime.now().strftime('%Y%m%d_%H%M%S')}.wav"
+            play_audio(file_path)
+        elif command == "exit":
+            print("Exiting program. Goodbye!")
+            break
+        else:
+            print("Invalid command. Please enter 'record', 'save', 'play', or 'exit'.")
 
 if __name__ == "__main__":
     main()
